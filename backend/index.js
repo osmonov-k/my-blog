@@ -13,48 +13,22 @@ import { clerkMiddleware, requireAuth, getAuth } from "@clerk/express";
 
 const app = express();
 app.use(cors(process.env.CLIENT_URL));
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "*",
+    methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.json({ message: "Welcome to my blog API!" });
+});
 
 app.use(clerkMiddleware());
 app.use("/webhooks", express.raw({ type: "application/json" }), webhookRouter);
-
-app.use(function (req, res, next) {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept"
-  );
-  next();
-});
-
-// app.get("/test", (req, res) => {
-//   res.status(200).send("It works!");
-// });
-
-// Test endpoint
-app.get("/auth-state", requireAuth(), (req, res) => {
-  try {
-    const auth = getAuth(req);
-    res.json({
-      userId: auth.userId,
-      sessionId: auth.sessionId,
-      fullAuthState: req.auth,
-    });
-  } catch (error) {
-    console.error("Auth state error:", error);
-    res.status(401).json({ error: "Not authenticated" });
-  }
-});
-
-// app.get("/protected", requireAuth(), async (req, res) => {
-//   // Use `getAuth()` to get the user's `userId`
-//   const { userId } = getAuth(req);
-
-//   // Use Clerk's JavaScript Backend SDK to get the user's User object
-//   const user = await clerkClient.users.getUser(userId);
-
-//   return res.json({ user });
-// });
 
 app.use("/users", userRouter);
 app.use("/posts", postRouter);

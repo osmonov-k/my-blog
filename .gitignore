@@ -27,6 +27,9 @@ build/
 .turbo/
 
 # Environment variables
+# .gitignore (root level)
+**/.env
+**/.env.*
 .env
 .env.local
 .env.development
