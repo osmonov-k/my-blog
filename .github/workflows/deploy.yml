@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "frontend/**" # Adjust if your frontend code is in a different directory
+      - ".github/workflows/deploy.yml"
 
 jobs:
   deploy:
