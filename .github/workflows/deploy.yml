@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "client/**" # Changed from frontend to client
+      - "client/**"
       - ".github/workflows/deploy.yml"
 
 jobs:
@@ -21,20 +21,19 @@ jobs:
         with:
           node-version: "20.19.4"
           cache: "npm"
-          cache-dependency-path: "client/package-lock.json" # Updated path
+          cache-dependency-path: "client/package-lock.json"
 
-      - name: Verify package-lock.json exists
+      - name: Verify and generate package-lock.json
         run: |
           if [ ! -f "client/package-lock.json" ]; then
-            cd client && npm install
-            git add client/package-lock.json
+            cd client
+            npm install
+            cd ..
             git config --global user.email "actions@github.com"
             git config --global user.name "GitHub Actions"
-            git commit -m "Add package-lock.json"
-            git push
-            echo "Generated and committed package-lock.json"
-          else
-            echo "package-lock.json exists"
+            git add client/package-lock.json
+            git commit -m "Add package-lock.json" || echo "No changes to commit"
+            git push || echo "Nothing to push"
           fi
 
       - name: Install dependencies
@@ -48,9 +47,9 @@ jobs:
       - name: Deploy to Vercel
         uses: BetaHuhn/deploy-to-vercel-action@v1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          working-directory: "./client" # Updated path
-          vercel-args: "--prod"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          WORKING_DIRECTORY: "./client"
+          PRODUCTION: true
