@@ -7,7 +7,7 @@ on:
       - "backend/**"
       - "nginx/**"
       - "docker-compose.prod.yml"
-      - ".github/workflows/deploy-backend.yml" # Added to trigger on workflow changes here
+      - ".github/workflows/deploy-backend.yml"
 
 jobs:
   deploy:
@@ -21,33 +21,24 @@ jobs:
         with:
           key: ${{ secrets.VPS_SSH_KEY }}
           known_hosts: ${{ secrets.KNOWN_HOSTS }}
-          # Note: This action doesn't support passphrase directly
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }} # Passphrase goes here
+          key: ${{ secrets.VPS_SSH_KEY }} # Only include this line
           script: |
-            # Create directory structure
             mkdir -p ~/app/{backend,nginx,certbot}
-
-            # Sync files from GitHub
             rsync -avz --delete \
               --exclude='.env' \
               --exclude='node_modules' \
               $GITHUB_WORKSPACE/backend/ ~/app/backend/
             rsync -avz --delete $GITHUB_WORKSPACE/nginx/ ~/app/nginx/
             cp $GITHUB_WORKSPACE/docker-compose.prod.yml ~/app/docker-compose.yml
-
-            # Start/update containers
             cd ~/app
             docker compose down
             docker compose pull
             docker compose up -d --build
-
-            # Wait for backend to be healthy before running migrations
             sleep 10
             docker exec backend npm run migrate
