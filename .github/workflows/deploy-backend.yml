@@ -7,7 +7,7 @@ on:
       - "backend/**"
       - "nginx/**"
       - "docker-compose.prod.yml"
-      - ".github/workflows/deploy.yml" # Added to trigger on workflow changes here
+      - ".github/workflows/deploy-backend.yml" # Added to trigger on workflow changes here
 
 jobs:
   deploy:
