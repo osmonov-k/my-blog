@@ -7,7 +7,7 @@ on:
       - "backend/**"
       - "nginx/**"
       - "docker-compose.prod.yml"
-      - ".github/workflows/deploy.yml"
+      - ".github/workflows/deploy.yml" # Added to trigger on workflow changes here
 
 jobs:
   deploy:
@@ -21,15 +21,15 @@ jobs:
         with:
           key: ${{ secrets.VPS_SSH_KEY }}
           known_hosts: ${{ secrets.KNOWN_HOSTS }}
-          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }} # Added passphrase
+          # Note: This action doesn't support passphrase directly
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }} # Explicitly pass the key
-          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }} # Added passphrase
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }} # Passphrase goes here
           script: |
             # Create directory structure
             mkdir -p ~/app/{backend,nginx,certbot}
