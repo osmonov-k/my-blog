@@ -23,8 +23,6 @@ jobs:
           test -d backend
           test -d nginx
           test -f docker-compose.prod.yml
-          ls -la backend | cat
-          ls -la nginx | cat
 
       - name: Build deploy bundle
         shell: bash
@@ -54,8 +52,8 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          # IMPORTANT: allow conditionals like [ -f ... ] to return 1 without killing the whole session
           script_stop: false
+          envs: DOMAIN,CERTBOT_EMAIL
           script: |
             set -euxo pipefail
 
@@ -69,7 +67,7 @@ jobs:
               exit 1
             fi
 
-            DOMAIN="blog.kanatosmon.com"            # set to your domain
+            : "${DOMAIN:?DOMAIN must be set}"      # e.g., blog.yourdomain.com
             CERT_EMAIL="${CERTBOT_EMAIL:-you@example.com}"
 
             mkdir -p ~/app
@@ -96,11 +94,32 @@ jobs:
                 "# JWT_SECRET=..." > ./backend/.env.prod
             fi
 
+            # bring up stack (non-blocking)
             $DC -f docker-compose.prod.yml down || true
-            $DC -f docker-compose.prod.yml build backend
             $DC -f docker-compose.prod.yml up -d
 
-            # first-time cert issuance (nginx must already be serving http.conf on :80)
+            # wait for backend health up to 5 minutes, print logs if failing
+            echo "Waiting for backend health..."
+            for i in {1..60}; do
+              STATUS="$($DC ps --format json | jq -r '.[] | select(.Name=="backend") | .Health')"
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Backend is healthy."
+                break
+              fi
+              if [ "$STATUS" = "unhealthy" ]; then
+                echo "Backend unhealthy (attempt $i)."
+              else
+                echo "Backend health: ${STATUS:-unknown} (attempt $i)."
+              fi
+              sleep 5
+              if [ "$i" -eq 60 ]; then
+                echo "Backend failed to become healthy. Recent logs:"
+                $DC logs --tail=200 backend || true
+                exit 1
+              fi
+            done
+
+            # first-time cert issuance via webroot (nginx already serving http)
             if [ ! -f "$CERT_PATH" ]; then
               echo "Requesting initial certificate for ${DOMAIN}..."
               $DC -f docker-compose.prod.yml run --rm \
@@ -115,7 +134,8 @@ jobs:
               $DC -f docker-compose.prod.yml exec -T nginx nginx -s reload || $DC -f docker-compose.prod.yml restart nginx
             fi
 
-            sleep 10
+            # DB migrations (optional)
             $DC -f docker-compose.prod.yml exec -T backend npm run migrate || echo "No migrate script or it failed"
         env:
-          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }}
+          DOMAIN: blog.kanatosmon.com # <-- set your domain
+          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }} # <-- add this secret
