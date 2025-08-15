@@ -12,14 +12,37 @@ import cors from "cors";
 import { clerkMiddleware, requireAuth, getAuth } from "@clerk/express";
 
 const app = express();
-app.use(cors(process.env.CLIENT_URL));
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || "*",
-    methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
+
+const allowed = new Set(
+  (process.env.CLIENT_URLS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    // normalize (no trailing slash)
+    .map((u) => u.replace(/\/+$/, ""))
 );
+
+const corsMiddleware = cors({
+  origin: (origin, cb) => {
+    // Non-browser clients (curl/Postman) have no Origin → allow
+    if (!origin) return cb(null, true);
+
+    // Normalize incoming origin (strip trailing slash)
+    const clean = origin.replace(/\/+$/, "");
+    if (allowed.has(clean)) return cb(null, true);
+
+    // Optional: allow any subdomain of a base domain
+    // if (clean.endsWith(".blog.kanatosmon.com")) return cb(null, true);
+
+    return cb(new Error("Not allowed by CORS"));
+  },
+  credentials: true, // needed if you use cookies or auth headers across origins
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  allowedHeaders: ["Content-Type", "Authorization"],
+});
+
+// Use exactly once, before your routes:
+app.use(corsMiddleware);
 
 app.use(express.json());
 
