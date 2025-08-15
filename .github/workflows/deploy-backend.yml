@@ -16,51 +16,50 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Ensures all files are available for rsync
+          fetch-depth: 0
 
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.7.0
+      # 1) Upload files from runner -> VPS
+      - name: Upload backend, nginx, docker-compose to VPS
+        uses: appleboy/scp-action@v0.1.7
         with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+          host: ${{ secrets.VPS_IP }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }} # ⬅️ paste full OpenSSH private key as a secret
+          port: 22 # change if non-standard
+          source: |
+            backend/**
+            nginx/**
+            docker-compose.prod.yml
+          target: ~/app
+          rm: true # remove target files that no longer exist in source (optional)
 
-      - name: Deploy via SSH
+      # 2) Run remote commands on VPS
+      - name: Run deploy commands on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }} # ⬅️ pass the key here (this fixes your error)
+          port: 22
           script: |
-            # Verify directory structure
-            echo "Creating app directories..."
+            set -e
+
+            echo "Ensuring directories..."
             mkdir -p ~/app/{backend,nginx,certbot}
 
-            # Sync files with proper paths
-            echo "Syncing backend files..."
-            rsync -avz --delete \
-              --exclude='.env' \
-              --exclude='node_modules' \
-              $GITHUB_WORKSPACE/backend/ ~/app/backend/
+            echo "Switching compose file name..."
+            cp ~/app/docker-compose.prod.yml ~/app/docker-compose.yml
 
-            echo "Syncing nginx files..."
-            rsync -avz --delete $GITHUB_WORKSPACE/nginx/ ~/app/nginx/
-
-            echo "Copying docker-compose file..."
-            cp $GITHUB_WORKSPACE/docker-compose.prod.yml ~/app/docker-compose.yml
-
-            # Docker operations
-            echo "Starting containers..."
+            echo "Docker compose up..."
             cd ~/app
-            docker compose down
+            docker compose down || true
             docker compose pull
             docker compose up -d --build
 
-            # Wait for services to start
-            echo "Waiting for services to initialize..."
+            echo "Waiting for services..."
             sleep 15
 
-            # Run migrations
-            echo "Running database migrations..."
-            docker exec backend npm install  # Ensure dependencies exist
-            docker exec backend npm run migrate
-        env:
-          GITHUB_WORKSPACE: /github/workspace # Explicitly set workspace path
-          DOCKER_HOST: unix:///var/run/docker.sock
+            # Optional: run DB migrations inside the backend container.
+            # Make sure your compose gives the container a predictable name or use 'docker compose exec'.
+            echo "Running migrations..."
+            docker compose exec -T backend npm run migrate

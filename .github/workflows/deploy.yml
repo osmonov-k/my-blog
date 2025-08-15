@@ -7,6 +7,11 @@ on:
       - "client/**"
       - ".github/workflows/deploy.yml"
 
+# ✅ Give the job rights to create a GitHub Deployment
+permissions:
+  contents: read
+  deployments: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -23,26 +28,21 @@ jobs:
           cache: "npm"
           cache-dependency-path: "client/package-lock.json"
 
-      - name: Verify and generate package-lock.json
+      # Optional: avoid pushing from CI. Create a lockfile locally if missing.
+      - name: Ensure package-lock.json exists
         run: |
           if [ ! -f "client/package-lock.json" ]; then
             cd client
-            npm install
-            cd ..
-            git config --global user.email "actions@github.com"
-            git config --global user.name "GitHub Actions"
-            git add client/package-lock.json
-            git commit -m "Add package-lock.json" || echo "No changes to commit"
-            git push || echo "Nothing to push"
+            npm i --package-lock-only
           fi
 
       - name: Install dependencies
         run: npm ci
-        working-directory: "./client"
+        working-directory: ./client
 
       - name: Build client app
         run: npm run build
-        working-directory: "./client"
+        working-directory: ./client
 
       - name: Deploy to Vercel
         uses: BetaHuhn/deploy-to-vercel-action@v1
@@ -51,5 +51,5 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          WORKING_DIRECTORY: "./client"
+          WORKING_DIRECTORY: ./client
           PRODUCTION: true
