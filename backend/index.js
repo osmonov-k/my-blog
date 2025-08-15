@@ -23,6 +23,8 @@ app.use(
 
 app.use(express.json());
 
+app.get("/health", (_req, res) => res.status(200).send("ok"));
+
 app.get("/", (req, res) => {
   res.json({ message: "Welcome to my blog API!" });
 });

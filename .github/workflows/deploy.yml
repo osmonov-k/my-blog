@@ -16,7 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # IDs from Vercel
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }} # team_...
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }} # prj_...
 
@@ -27,35 +26,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (for CLI only)
         uses: actions/setup-node@v4
         with:
-          node-version: "20.19.4"
-          cache: npm
-          cache-dependency-path: client/package-lock.json
-
-      - name: Ensure package-lock.json exists
-        run: |
-          if [ ! -f "client/package-lock.json" ]; then
-            cd client && npm i --package-lock-only
-          fi
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: ./client
-
-      - name: Build app
-        run: npm run build
-        working-directory: ./client
+          node-version: "20.x"
 
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
 
+      # optional, but keeps .vercel/env.* in sync if you need them
       - name: Pull Vercel env (production)
         run: vercel pull --yes --environment=production --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
 
-      - name: Build with Vercel (production)
-        run: vercel build --prod --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
-
-      - name: Deploy prebuilt (production)
-        run: vercel deploy --prebuilt --prod --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
+      # 🚀 Remote build & deploy (no local `vercel build`, so no ENOENT)
+      - name: Deploy (production, server-side build)
+        run: vercel deploy --prod --yes --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}

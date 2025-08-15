@@ -96,7 +96,7 @@ jobs:
 
             # bring up stack (non-blocking)
             $DC -f docker-compose.prod.yml down || true
-            $DC -f docker-compose.prod.yml up -d
+            $DC -f docker-compose.prod.yml up -d || true
 
             # wait for backend health up to 5 minutes, print logs if failing
             echo "Waiting for backend health..."

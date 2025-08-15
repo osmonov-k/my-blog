@@ -1,34 +1,29 @@
-version: "3.8"
-
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: "yourname/blog-backend"
+    image: yourname/blog-backend
     container_name: backend
     env_file:
-      - ./backend/.env.prod # keep this ONLY on the VPS, not in git
+      - ./backend/.env.prod
     environment:
       - NODE_ENV=production
+      - PORT=3000
     restart: unless-stopped
     networks: [webnet]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
 
   nginx:
     image: nginx:alpine
     container_name: nginx
-    depends_on:
-      backend:
-        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
-    # We always mount nginx/default.conf; our deploy script copies http.conf OR https.conf into it each run
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
       - ./certbot/conf:/etc/letsencrypt
@@ -42,7 +37,6 @@ services:
     volumes:
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
-    # renewal loop; initial issuance is run on-demand by the deploy script
     entrypoint: >
       /bin/sh -c 'trap exit TERM; while :; do
         certbot renew;
