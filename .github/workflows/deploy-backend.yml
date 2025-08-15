@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify files exist
+        shell: bash
         run: |
           set -euxo pipefail
           test -d backend
@@ -25,8 +26,8 @@ jobs:
           ls -la backend | cat
           ls -la nginx | cat
 
-      # Build a deterministic tarball (avoids glob pitfalls and excludes big/secret stuff)
       - name: Build deploy bundle
+        shell: bash
         run: |
           set -euxo pipefail
           rm -rf deploy_bundle bundle.tgz
@@ -57,8 +58,18 @@ jobs:
           script: |
             set -euxo pipefail
 
-            DOMAIN="blog.kanatosmon.com"            # <-- change or move to secret
-            CERT_EMAIL="${CERTBOT_EMAIL:-you@example.com}"  # set as env or replace
+            # Pick docker compose command (v2 plugin or legacy binary)
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              DC="docker-compose"
+            else
+              echo "Docker Compose is not installed. Install docker-compose-plugin on the VPS." >&2
+              exit 1
+            fi
+
+            DOMAIN="blog.kanatosmon.com"                 # <-- change or move to secret
+            CERT_EMAIL="${CERTBOT_EMAIL:-you@example.com}"  # <-- set as secret env if you want
 
             mkdir -p ~/app
             tar -xzf ~/app/bundle.tgz -C ~/app
@@ -70,30 +81,29 @@ jobs:
             if [ -f "/home/${USER}/app/certbot/conf/live/${DOMAIN}/fullchain.pem" ]; then
               cp ~/app/nginx/https.conf ~/app/nginx/default.conf
             else
-              cp ~/app/nginx/http.conf ~/app/nginx/default.conf
+              cp ~/app/nginx/http.conf  ~/app/nginx/default.conf
+            fi
+
+            cd ~/app
+
+            # Ensure backend env exists; create placeholder if missing (no heredoc to avoid YAML issues)
+            if [ ! -f ./backend/.env.prod ]; then
+              printf "%s\n" \
+                "# fill real values and keep this ONLY on VPS" \
+                "PORT=3000" \
+                "# DB_...=..." \
+                "# JWT_SECRET=..." > ./backend/.env.prod
             fi
 
             # Compose up (build backend)
-            cd ~/app
-            # Ensure backend env exists; create once and fill values manually if missing
-            if [ ! -f ./backend/.env.prod ]; then
-              echo "WARNING: ./backend/.env.prod missing. Creating placeholder..."
-              cat > ./backend/.env.prod <<'EOF'
-# fill real values and keep this ONLY on VPS
-PORT=3000
-# DB_...=...
-# JWT_SECRET=...
-EOF
-            fi
-
-            docker compose -f docker-compose.prod.yml down || true
-            docker compose -f docker-compose.prod.yml build backend
-            docker compose -f docker-compose.prod.yml up -d
+            $DC -f docker-compose.prod.yml down || true
+            $DC -f docker-compose.prod.yml build backend
+            $DC -f docker-compose.prod.yml up -d
 
             # If no certs yet, issue them with webroot (Nginx must be running on :80 with http.conf)
             if [ ! -f "/home/${USER}/app/certbot/conf/live/${DOMAIN}/fullchain.pem" ]; then
               echo "Requesting initial certificate for ${DOMAIN}..."
-              docker compose -f docker-compose.prod.yml run --rm \
+              $DC -f docker-compose.prod.yml run --rm \
                 -e CERTBOT_EMAIL="${CERT_EMAIL}" \
                 certbot certonly --webroot \
                 -w /var/www/certbot \
@@ -102,9 +112,9 @@ EOF
 
               # Switch to https config and reload nginx
               cp ~/app/nginx/https.conf ~/app/nginx/default.conf
-              docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload || docker compose -f docker-compose.prod.yml restart nginx
+              $DC -f docker-compose.prod.yml exec -T nginx nginx -s reload || $DC -f docker-compose.prod.yml restart nginx
             fi
 
             # Wait a bit and run migrations (if your image has the script)
             sleep 10
-            docker compose -f docker-compose.prod.yml exec -T backend npm run migrate || echo "No migrate script or it failed"
+            $DC -f docker-compose.prod.yml exec -T backend npm run migrate || echo "No migrate script or it failed"
