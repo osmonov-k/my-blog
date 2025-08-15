@@ -7,49 +7,55 @@ on:
       - "client/**"
       - ".github/workflows/deploy.yml"
 
-# ✅ Give the job rights to create a GitHub Deployment
 permissions:
   contents: read
   deployments: write
+
+concurrency:
+  group: vercel-frontend-deploy
+  cancel-in-progress: true
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
+        # fetch-depth: 0 not required here, but harmless if you add it
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Install Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20.19.4"
-          cache: "npm"
-          cache-dependency-path: "client/package-lock.json"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
 
-      # Optional: avoid pushing from CI. Create a lockfile locally if missing.
       - name: Ensure package-lock.json exists
         run: |
           if [ ! -f "client/package-lock.json" ]; then
-            cd client
-            npm i --package-lock-only
+            cd client && npm i --package-lock-only
           fi
 
       - name: Install dependencies
         run: npm ci
         working-directory: ./client
 
-      - name: Build client app
+      - name: Build app
         run: npm run build
         working-directory: ./client
 
-      - name: Deploy to Vercel
-        uses: BetaHuhn/deploy-to-vercel-action@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          WORKING_DIRECTORY: ./client
-          PRODUCTION: true
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Pull Vercel env (production)
+        run: vercel pull --yes --environment=production --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with Vercel (production)
+        run: vercel build --prod --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy prebuilt (production)
+        run: vercel deploy --prebuilt --prod --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}

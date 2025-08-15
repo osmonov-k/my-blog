@@ -15,51 +15,96 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # 1) Upload files from runner -> VPS
-      - name: Upload backend, nginx, docker-compose to VPS
+      - name: Verify files exist
+        run: |
+          set -euxo pipefail
+          test -d backend
+          test -d nginx
+          test -f docker-compose.prod.yml
+          ls -la backend | cat
+          ls -la nginx | cat
+
+      # Build a deterministic tarball (avoids glob pitfalls and excludes big/secret stuff)
+      - name: Build deploy bundle
+        run: |
+          set -euxo pipefail
+          rm -rf deploy_bundle bundle.tgz
+          mkdir -p deploy_bundle/backend deploy_bundle/nginx
+          rsync -av --delete --exclude 'node_modules' --exclude '.env' --exclude '.env.*' backend/ deploy_bundle/backend/
+          rsync -av --delete nginx/ deploy_bundle/nginx/
+          cp docker-compose.prod.yml deploy_bundle/docker-compose.prod.yml
+          tar -czf bundle.tgz -C deploy_bundle .
+
+      - name: Upload bundle to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }} # ⬅️ paste full OpenSSH private key as a secret
-          port: 22 # change if non-standard
-          source: |
-            backend/**
-            nginx/**
-            docker-compose.prod.yml
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          source: bundle.tgz
           target: ~/app
-          rm: true # remove target files that no longer exist in source (optional)
 
-      # 2) Run remote commands on VPS
       - name: Run deploy commands on VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_IP }}
           username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }} # ⬅️ pass the key here (this fixes your error)
+          key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          script_stop: true
           script: |
-            set -e
+            set -euxo pipefail
 
-            echo "Ensuring directories..."
-            mkdir -p ~/app/{backend,nginx,certbot}
+            DOMAIN="blog.kanatosmon.com"            # <-- change or move to secret
+            CERT_EMAIL="${CERTBOT_EMAIL:-you@example.com}"  # set as env or replace
 
-            echo "Switching compose file name..."
-            cp ~/app/docker-compose.prod.yml ~/app/docker-compose.yml
+            mkdir -p ~/app
+            tar -xzf ~/app/bundle.tgz -C ~/app
 
-            echo "Docker compose up..."
+            # Ensure certbot dirs exist and persist
+            mkdir -p ~/app/certbot/conf ~/app/certbot/www
+
+            # Pick nginx config based on whether certs already exist
+            if [ -f "/home/${USER}/app/certbot/conf/live/${DOMAIN}/fullchain.pem" ]; then
+              cp ~/app/nginx/https.conf ~/app/nginx/default.conf
+            else
+              cp ~/app/nginx/http.conf ~/app/nginx/default.conf
+            fi
+
+            # Compose up (build backend)
             cd ~/app
-            docker compose down || true
-            docker compose pull
-            docker compose up -d --build
+            # Ensure backend env exists; create once and fill values manually if missing
+            if [ ! -f ./backend/.env.prod ]; then
+              echo "WARNING: ./backend/.env.prod missing. Creating placeholder..."
+              cat > ./backend/.env.prod <<'EOF'
+# fill real values and keep this ONLY on VPS
+PORT=3000
+# DB_...=...
+# JWT_SECRET=...
+EOF
+            fi
 
-            echo "Waiting for services..."
-            sleep 15
+            docker compose -f docker-compose.prod.yml down || true
+            docker compose -f docker-compose.prod.yml build backend
+            docker compose -f docker-compose.prod.yml up -d
 
-            # Optional: run DB migrations inside the backend container.
-            # Make sure your compose gives the container a predictable name or use 'docker compose exec'.
-            echo "Running migrations..."
-            docker compose exec -T backend npm run migrate
+            # If no certs yet, issue them with webroot (Nginx must be running on :80 with http.conf)
+            if [ ! -f "/home/${USER}/app/certbot/conf/live/${DOMAIN}/fullchain.pem" ]; then
+              echo "Requesting initial certificate for ${DOMAIN}..."
+              docker compose -f docker-compose.prod.yml run --rm \
+                -e CERTBOT_EMAIL="${CERT_EMAIL}" \
+                certbot certonly --webroot \
+                -w /var/www/certbot \
+                -d "${DOMAIN}" \
+                --email "${CERT_EMAIL}" --agree-tos --no-eff-email
+
+              # Switch to https config and reload nginx
+              cp ~/app/nginx/https.conf ~/app/nginx/default.conf
+              docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload || docker compose -f docker-compose.prod.yml restart nginx
+            fi
+
+            # Wait a bit and run migrations (if your image has the script)
+            sleep 10
+            docker compose -f docker-compose.prod.yml exec -T backend npm run migrate || echo "No migrate script or it failed"
