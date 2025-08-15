@@ -1,11 +1,10 @@
-name: Deploy to VPS
+name: Deploy Backend to VPS
 
 on:
   push:
     branches: [main]
     paths:
       - "backend/**"
-      - "nginx/**"
       - "docker-compose.prod.yml"
       - ".github/workflows/deploy-backend.yml"
 
@@ -13,7 +12,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Verify files exist
@@ -21,17 +20,15 @@ jobs:
         run: |
           set -euxo pipefail
           test -d backend
-          test -d nginx
           test -f docker-compose.prod.yml
 
-      - name: Build deploy bundle
+      - name: Build deploy bundle (backend only)
         shell: bash
         run: |
           set -euxo pipefail
           rm -rf deploy_bundle bundle.tgz
-          mkdir -p deploy_bundle/backend deploy_bundle/nginx
+          mkdir -p deploy_bundle/backend
           rsync -av --delete --exclude 'node_modules' --exclude '.env' --exclude '.env.*' backend/ deploy_bundle/backend/
-          rsync -av --delete nginx/ deploy_bundle/nginx/
           cp docker-compose.prod.yml deploy_bundle/docker-compose.prod.yml
           tar -czf bundle.tgz -C deploy_bundle .
 
@@ -53,11 +50,10 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           script_stop: false
-          envs: DOMAIN,CERTBOT_EMAIL
           script: |
             set -euxo pipefail
 
-            # pick docker compose command
+            # pick compose command
             if docker compose version >/dev/null 2>&1; then
               DC="docker compose"
             elif command -v docker-compose >/dev/null 2>&1; then
@@ -66,26 +62,13 @@ jobs:
               echo "Docker Compose is not installed on the VPS." >&2
               exit 1
             fi
-
-            : "${DOMAIN:?DOMAIN must be set}"      # e.g., blog.yourdomain.com
-            CERT_EMAIL="${CERTBOT_EMAIL:-you@example.com}"
+            CF="-f docker-compose.prod.yml"
 
             mkdir -p ~/app
             tar -xzf ~/app/bundle.tgz -C ~/app
-            mkdir -p ~/app/certbot/conf ~/app/certbot/www
-
-            CERT_PATH="/home/${USER}/app/certbot/conf/live/${DOMAIN}/fullchain.pem"
-
-            # choose nginx config (http before first cert, https after)
-            if [ -f "$CERT_PATH" ]; then
-              cp ~/app/nginx/https.conf ~/app/nginx/default.conf
-            else
-              cp ~/app/nginx/http.conf  ~/app/nginx/default.conf
-            fi
-
             cd ~/app
 
-            # ensure backend env exists (server-only)
+            # ensure server-only env exists
             if [ ! -f ./backend/.env.prod ]; then
               printf "%s\n" \
                 "# fill real values and keep this ONLY on VPS" \
@@ -94,48 +77,25 @@ jobs:
                 "# JWT_SECRET=..." > ./backend/.env.prod
             fi
 
-            # bring up stack (non-blocking)
-            $DC -f docker-compose.prod.yml down || true
-            $DC -f docker-compose.prod.yml up -d || true
+            # bring up (non-fatal if still getting healthy)
+            $DC $CF down || true
+            $DC $CF up -d || true
 
-            # wait for backend health up to 5 minutes, print logs if failing
             echo "Waiting for backend health..."
             for i in {1..60}; do
-              STATUS="$($DC ps --format json | jq -r '.[] | select(.Name=="backend") | .Health')"
+              STATUS="$(docker inspect -f '{{.State.Health.Status}}' backend 2>/dev/null || echo unknown)"
               if [ "$STATUS" = "healthy" ]; then
                 echo "Backend is healthy."
                 break
               fi
-              if [ "$STATUS" = "unhealthy" ]; then
-                echo "Backend unhealthy (attempt $i)."
-              else
-                echo "Backend health: ${STATUS:-unknown} (attempt $i)."
-              fi
+              echo "Backend health: $STATUS (attempt $i)"
               sleep 5
               if [ "$i" -eq 60 ]; then
                 echo "Backend failed to become healthy. Recent logs:"
-                $DC logs --tail=200 backend || true
+                $DC $CF logs --tail=200 backend || true
                 exit 1
               fi
             done
 
-            # first-time cert issuance via webroot (nginx already serving http)
-            if [ ! -f "$CERT_PATH" ]; then
-              echo "Requesting initial certificate for ${DOMAIN}..."
-              $DC -f docker-compose.prod.yml run --rm \
-                -e CERTBOT_EMAIL="${CERT_EMAIL}" \
-                certbot certonly --webroot \
-                -w /var/www/certbot \
-                -d "${DOMAIN}" \
-                --email "${CERT_EMAIL}" --agree-tos --no-eff-email
-
-              # switch to https and reload
-              cp ~/app/nginx/https.conf ~/app/nginx/default.conf
-              $DC -f docker-compose.prod.yml exec -T nginx nginx -s reload || $DC -f docker-compose.prod.yml restart nginx
-            fi
-
-            # DB migrations (optional)
-            $DC -f docker-compose.prod.yml exec -T backend npm run migrate || echo "No migrate script or it failed"
-        env:
-          DOMAIN: blog.kanatosmon.com # <-- set your domain
-          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }} # <-- add this secret
+            # optional DB migrations
+            $DC $CF exec -T backend npm run migrate || echo "No migrate script or it failed"

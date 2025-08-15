@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # IDs from Vercel (team project)
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }} # team_...
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }} # prj_...
 
@@ -34,10 +35,10 @@ jobs:
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
 
-      # optional, but keeps .vercel/env.* in sync if you need them
+      # Optional: sync env files locally; safe to skip
       - name: Pull Vercel env (production)
-        run: vercel pull --yes --environment=production --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token ${{ secrets.VERCEL_TOKEN }}
 
-      # 🚀 Remote build & deploy (no local `vercel build`, so no ENOENT)
-      - name: Deploy (production, server-side build)
-        run: vercel deploy --prod --yes --cwd ./client --token ${{ secrets.VERCEL_TOKEN }}
+      # 🚀 Server-side build & deploy (no local build)
+      - name: Deploy (production, remote build)
+        run: vercel deploy --prod --yes --token ${{ secrets.VERCEL_TOKEN }}
